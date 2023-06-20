@@ -15,9 +15,13 @@
  */
 package com.baomidou.mybatisplus.extension.plugins;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.ClassUtils;
+import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
+import com.baomidou.mybatisplus.core.toolkit.ParameterUtils;
 import com.baomidou.mybatisplus.core.toolkit.StringPool;
 import com.baomidou.mybatisplus.extension.plugins.inner.InnerInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.toolkit.PropertyMapper;
 import lombok.Setter;
 import org.apache.ibatis.cache.CacheKey;
@@ -32,6 +36,8 @@ import org.apache.ibatis.session.RowBounds;
 
 import java.sql.Connection;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 /**
  * @author miemie
@@ -71,14 +77,26 @@ public class MybatisPlusInterceptor implements Interceptor {
                     // 几乎不可能走进这里面,除非使用Executor的代理对象调用query[args[6]]
                     boundSql = (BoundSql) args[5];
                 }
+                IPage page = null;
+                CompletableFuture<List<Object>> pageTotalFuture = null;
                 for (InnerInterceptor query : interceptors) {
-                    if (!query.willDoQuery(executor, ms, parameter, rowBounds, resultHandler, boundSql)) {
+                    if (query instanceof PaginationInnerInterceptor) {
+                        page = ParameterUtils.findPage(parameter).orElse(null);
+                        if (page != null && page.asyncPageTotal()) {
+                            // async get page's total
+                            pageTotalFuture = ((PaginationInnerInterceptor) query).asyncPageTotal(executor, ms, parameter, rowBounds, resultHandler, boundSql, page);
+                        } else if (!query.willDoQuery(executor, ms, parameter, rowBounds, resultHandler, boundSql)) {
+                            return Collections.emptyList();
+                        }
+                    } else if (!query.willDoQuery(executor, ms, parameter, rowBounds, resultHandler, boundSql)) {
                         return Collections.emptyList();
                     }
                     query.beforeQuery(executor, ms, parameter, rowBounds, resultHandler, boundSql);
                 }
                 CacheKey cacheKey = executor.createCacheKey(ms, parameter, rowBounds, boundSql);
-                return executor.query(ms, parameter, rowBounds, resultHandler, cacheKey, boundSql);
+                List<Object> res = executor.query(ms, parameter, rowBounds, resultHandler, cacheKey, boundSql);
+                setPageTotalIfNecessary(page, pageTotalFuture);
+                return res;
             } else if (isUpdate) {
                 for (InnerInterceptor update : interceptors) {
                     if (!update.willDoUpdate(executor, ms, parameter)) {
@@ -143,5 +161,23 @@ public class MybatisPlusInterceptor implements Interceptor {
             innerInterceptor.setProperties(v);
             addInnerInterceptor(innerInterceptor);
         });
+    }
+
+    /**
+     * 设置page's total(如果需要)
+     */
+    public void setPageTotalIfNecessary(IPage page, CompletableFuture<List<Object>> pageTotalFuture) throws ExecutionException, InterruptedException {
+        if (page != null && pageTotalFuture != null) {
+            long total = 0;
+            List<Object> result = pageTotalFuture.get();
+            if (CollectionUtils.isNotEmpty(result)) {
+                // 个别数据库 count 没数据不会返回 0
+                Object o = result.get(0);
+                if (o != null) {
+                    total = Long.parseLong(o.toString());
+                }
+            }
+            page.setTotal(total);
+        }
     }
 }

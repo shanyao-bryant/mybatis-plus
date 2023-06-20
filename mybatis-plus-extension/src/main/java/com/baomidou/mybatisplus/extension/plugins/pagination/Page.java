@@ -17,6 +17,7 @@ package com.baomidou.mybatisplus.extension.plugins.pagination;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.metadata.OrderItem;
+import lombok.Getter;
 import lombok.Setter;
 
 import java.util.ArrayList;
@@ -83,6 +84,12 @@ public class Page<T> implements IPage<T> {
      */
     @Setter
     protected String countId;
+    /**
+     * 是否异步执行分页查询
+     */
+    @Getter
+    @Setter
+    protected boolean asyncPage = false;
 
     public Page() {
     }
@@ -112,6 +119,15 @@ public class Page<T> implements IPage<T> {
         this.size = size;
         this.total = total;
         this.searchCount = searchCount;
+    }
+
+    public Page(boolean asyncPage, long current, long size) {
+        if (current > 1) {
+            this.current = current;
+        }
+        this.size = size;
+        this.total = 0;
+        this.asyncPage = asyncPage;
     }
 
     /**
@@ -291,6 +307,11 @@ public class Page<T> implements IPage<T> {
             return false;
         }
         return searchCount;
+    }
+
+    @Override
+    public boolean asyncPageTotal() {
+        return asyncPage;
     }
 
     /**

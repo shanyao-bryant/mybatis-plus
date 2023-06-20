@@ -48,6 +48,7 @@ import org.apache.ibatis.session.RowBounds;
 
 import java.sql.SQLException;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -479,5 +480,38 @@ public class PaginationInnerInterceptor implements InnerInterceptor {
             .whenNotBlank("dialect", ClassUtils::newInstance, this::setDialect)
             .whenNotBlank("maxLimit", Long::parseLong, this::setMaxLimit)
             .whenNotBlank("optimizeJoin", Boolean::parseBoolean, this::setOptimizeJoin);
+    }
+
+
+    /**
+     * async to get page's total
+     */
+    public CompletableFuture<List<Object>> asyncPageTotal(Executor executor, MappedStatement ms, Object parameter, RowBounds rowBounds,
+                                                          ResultHandler resultHandler, BoundSql boundSql, IPage page) {
+        if (page == null || page.getSize() < 0 || !page.searchCount() || !page.asyncPageTotal()) {
+            return null;
+        }
+
+        BoundSql countSql;
+        MappedStatement countMs = buildCountMappedStatement(ms, page.countId());
+        if (countMs != null) {
+            countSql = countMs.getBoundSql(parameter);
+        } else {
+            countMs = buildAutoCountMappedStatement(ms);
+            String countSqlStr = autoCountSql(page, boundSql.getSql());
+            PluginUtils.MPBoundSql mpBoundSql = PluginUtils.mpBoundSql(boundSql);
+            countSql = new BoundSql(countMs.getConfiguration(), countSqlStr, mpBoundSql.parameterMappings(), parameter);
+            PluginUtils.setAdditionalParameter(countSql, mpBoundSql.additionalParameters());
+        }
+
+        CacheKey cacheKey = executor.createCacheKey(countMs, parameter, rowBounds, countSql);
+        MappedStatement finalCountMs = countMs;
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return executor.query(finalCountMs, parameter, rowBounds, resultHandler, cacheKey, countSql);
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
+        });
     }
 }

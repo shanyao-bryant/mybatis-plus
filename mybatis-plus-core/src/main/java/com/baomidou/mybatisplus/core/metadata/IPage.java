@@ -180,4 +180,13 @@ public interface IPage<T> extends Serializable {
     default String countId() {
         return null;
     }
+
+    /**
+     * 是否异步分页查询
+     *
+     * @return  if you need async to get page's total: true, else false
+     */
+    default boolean asyncPageTotal() {
+        return false;
+    }
 }
